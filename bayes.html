@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8"/>
+        <title>GAME</title>
+        <!-- <link rel="stylesheet" href="../style/stylesheet.css"> -->
+        <script type="text/javascript" src="field_of_view.js"></script>
+        <script type="text/javascript" src="a_star.js"></script>
+        <script type="text/javascript" src="bayes.js"></script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="container__main">
+                <main class="content"> 
+                    <canvas id="myCanvas" width="500" height="500" margin="auto">
+                    </canvas>
+                    <canvas id="probCanvas" width="500" height="500">
+                    </canvas>
+                </main>
+            </div>
+        </div>  
+
+
+        <!-- <div class="slidecontainer">
+            <input type="range" min="0" max="100" value="0" class="slider" id="myRange">
+        </div> -->
+        <script>
+            // import { computeFov } from "field_of_view.js";
+
+            var slider = document.getElementById("myRange");
+            var canvas = document.getElementById("myCanvas");
+            var probCanvas = document.getElementById("probCanvas");
+            var ctx = canvas.getContext("2d");
+            var ctx2=probCanvas.getContext("2d");
+
+
+
+            var pixSize = 20;
+            var subDiv = canvas.width/pixSize;
+            var enemyView = Math.PI/3;
+
+            var player = {x:0, y:0};
+            var enemy = {x: 10, y:10, direction: 0};
+            var visible = [];
+            for (var c = 0; c<subDiv; c++){
+                visible[c] = []; 
+                for(var r = 0; r<subDiv; r++){
+                    visible[c][r] = false;
+                }
+            }
+
+            var playerVisible = [];
+            for (var c = 0; c<subDiv; c++){
+                playerVisible[c] = []; 
+                for(var r = 0; r<subDiv; r++){
+                    playerVisible[c][r] = false;
+                }
+            }
+            
+
+            const barriers = [
+                {x:2, y:2},
+                {x:2, y:3},
+                {x:2, y:4},
+                {x:2, y:5},
+                {x:2, y:6},
+                {x:2, y:7},
+                {x:2, y:8},
+                {x:2, y:9},
+                {x:2, y:10},
+                {x:3, y:2},
+                {x:4, y:2},
+                {x:5, y:2},
+                {x:6, y:2},
+                {x:7, y:2},
+                {x:8, y:2},
+                {x:9, y:2},
+                {x:10, y:2},
+                {x:14, y:10},
+                {x:14, y:11},
+                {x:14, y:12},
+                {x:14, y:13},
+                {x:14, y:14},
+                {x:14, y:15},
+                {x:14, y:16},
+                {x:14, y:17},
+                {x:14, y:18},
+                {x:15,y:14},
+                {x:16,y:14},
+                {x:17,y:14},
+                {x:18,y:14},
+                {x:19,y:14},
+                {x:20,y:14},
+                {x:21,y:14},
+                {x:22,y:14},
+                {x:23,y:14},
+                {x:24,y:14},
+                {x:3,y:20},
+                {x:4,y:20},
+                {x:5,y:20},
+                {x:6,y:20},
+                {x:7,y:20},
+                {x:8,y:20},
+                {x:9,y:20},
+                {x:10,y:20},
+            ];
+
+            let directions = [
+                [0,-1],
+                [-1,0], 
+                [0,1],
+                [1,0]
+            ];
+
+            var grid =[];
+            for (var c = 0; c<subDiv; c++){
+                grid[c] = [];
+                for (var r = 0; r< subDiv; r++){
+                    grid[c][r] = false;
+                    for( let b of barriers){
+                        if (b.x == c && b.y == r){grid[c][r]=true;}
+                    }
+                }
+            }
+
+            var probs = [];
+            for (var c = 0; c<subDiv; c++){
+                probs[c] = [];
+                for (var r = 0; r< subDiv; r++){
+                    probs[c][r] = 1/(subDiv*subDiv);
+                }
+            }
+
+            function computeMovementModel(){
+                var movementModel =[];
+                for (var i = 0; i< subDiv*subDiv; i++){
+                    movementModel[i] = [];
+                    var x = Math.floor(i/subDiv);
+                    var y = i%subDiv;
+                    //calculate the attainable points inside a radius d of (x,y)
+                    var attainable = [];
+                    var queue = [];
+                    const MAX_D=4;
+                    queue.push({x:x,y:y,d:0});
+                    // do a bfs on surrounding nodes
+                    while(queue.length>0){
+                        currentNode = queue.shift();
+                        attainable.push(currentNode);
+                        // console.log('currentNode: ', currentNode );
+                        for(var dir of directions){
+                            if(currentNode.x + dir[0]< 0 || currentNode.x + dir[0] >= grid.length){continue;} //x value out of bounds
+                            if(currentNode.y + dir[1]< 0 || currentNode.y + dir[1] >= grid.length){continue;} //y value out of bounds
+                            if(grid[currentNode.x + dir[0]][currentNode.y+dir[1]]==true){continue;}
+
+                            var newNode = {x:currentNode.x + dir[0], y:currentNode.y+dir[1], d: currentNode.d+1};
+                            // console.log('newNode: ', newNode);
+
+                            
+                            //check if node is already found
+                            var check = false;
+                            for (var node of attainable){
+                                if (node.x==newNode.x && node.y == newNode.y){check = true;}
+                            }
+
+                            if (newNode.d <= MAX_D && check==false){queue.push(newNode);}
+                        }
+                        // console.log(queue.length);
+                    }     
+
+                    // console.log('(x,y):',x,y);
+                    // console.log(attainable.length);
+
+                    var tot = 0;
+                    for (var j = 0; j<subDiv*subDiv; j++){
+                        //calculate probability of going to (s,t) given currently in (x,y)
+                        var s = Math.floor(j/subDiv);
+                        var t = j%subDiv;
+                        movementModel[i][j]=0;
+
+                        for (var node of attainable){
+                            if (node.x==s && node.y ==t&&node.d>0){
+                                movementModel[i][j]=1/(Math.pow(node.d,0.5));
+                            }
+                            if (node.x ==s && node.y ==t &&node.d==0){
+                                movementModel[i][j]=1;
+                            }
+                        }
+
+                        tot+=movementModel[i][j];
+                    
+                    }
+
+                    for (var j = 0; j<subDiv*subDiv; j++){
+                        movementModel[i][j]=movementModel[i][j]/tot;
+                        // console.log(movementModel[i][j]);
+                    }
+                }
+
+                return movementModel;
+
+            }
+
+            var movementModel = computeMovementModel();
+
+
+            // const barriers = [{x:2,y:3},{x:3,y:2}];
+
+            function drawBarriers(){
+                for (let b of barriers){
+                    // console.log(barriers[b])
+                    ctx.beginPath();
+                    ctx.rect(b.x*pixSize, b.y*pixSize, pixSize, pixSize);
+                    ctx.fillStyle = "#222222";
+                    ctx.fill();
+                    ctx.closePath();
+                }
+            }
+
+            function isBarrier(x,y){
+                if (x<0) {return true;}
+                if (x >= subDiv) {return true;}
+                if (y<0) {return true;}
+                if (y>=subDiv) {return true;}
+
+                return grid[x][y];
+            }
+
+            function markVisible(x,y){
+                if (x<0) {return true;}
+                if (x >= subDiv) {return true;}
+                if (y<0) {return true;}
+                if (y>=subDiv) {return true;}
+
+                visible[x][y] = true;
+                // console.log([x,y])
+            }
+
+            function markVisiblePlayer(x,y){
+                if (x<0) {return true;}
+                if (x >= subDiv) {return true;}
+                if (y<0) {return true;}
+                if (y>=subDiv) {return true;}
+
+                playerVisible[x][y] = true;
+            }
+
+            function drawPlayer(){
+                ctx.beginPath();
+                ctx.rect(player.x*pixSize, player.y*pixSize, pixSize, pixSize);
+                ctx.fillStyle = "rgb(128,128,128)";
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            function inViewAngle(x,y){
+                // return true;
+                var dx = x-enemy.x;
+                var dy = -(y - enemy.y);
+
+                if (dx*dx+dy*dy <= 35){return true};
+
+                var dot = dx*Math.cos(enemy.direction) + dy*Math.sin(enemy.direction);
+                dot = dot/(Math.sqrt(dx*dx + dy*dy));
+
+                if (dot > Math.cos(enemyView/2)) {
+                    return true;
+                }
+                else {
+                    return false;
+                }
+            }
+
+
+            function drawEnemy(){
+                // enemy.direction = slider.value/100*Math.PI*2;
+                ctx.beginPath();
+                ctx.rect(enemy.x*pixSize, enemy.y*pixSize, pixSize, pixSize);
+                ctx.fillStyle = "rgb(178,34,34)";
+                ctx.fill();
+                ctx.closePath();
+            }
+
+            function drawPath(path){
+                for (let b of path){
+                    ctx.beginPath();
+                    ctx.rect(b[0]*pixSize, b[1]*pixSize, pixSize, pixSize);
+                    ctx.fillStyle = "#FFFFFF";
+                    ctx.fill();
+                    ctx.closePath();
+                }
+            }
+
+            var shortestPath=[];
+            var end = [player.x,player.y];
+            // var prevEnd=[];
+            
+            function enemyStep(x,y){
+                // var end = [x,y];
+                var start = [enemy.x, enemy.y];
+                var dx=0;
+                var dy=0;
+
+                if (visible[player.x][player.y]==true){
+                    end = [player.x, player.y];
+                    shortestPath = aStar(start, end, grid);
+                    var next = shortestPath.pop();
+                }
+                if(shortestPath.length==0){
+                    end = [x,y];
+                    shortestPath = aStar(start, end, grid);
+                    var next = shortestPath.pop();
+                }
+                if (shortestPath.length>0){
+
+                    next=shortestPath.pop();
+                    dx = next[0]-start[0];
+                    dy = (next[1] - start[1]);
+                    if (Math.abs(dx)>Math.abs(dy)){
+                        if(dx>0) {enemy.x++;}
+                        if(dx<0) {enemy.x--;}
+                    }
+                    else{
+                        if (dy>0) {enemy.y++;}
+                        if (dy <0) {enemy.y--;}
+                    }
+                }
+                
+                //always look in the direction we are walking.
+                dx = end[0]-start[0];
+                dy = (end[1] - start[1]);
+                dy=-dy;
+
+                if (dx==0){
+                    if (dy>=0) enemy.direction = Math.PI/2;
+                    if (dy < 0) enemy.direction = 3*Math.PI/2;
+                }
+                else {
+                    if (dx>0) enemy.direction = Math.atan(dy/dx);
+                    if (dx<0) enemy.direction = Math.atan(dy/dx)+Math.PI;
+                }
+
+                for (var c = 0; c<subDiv; c++){ 
+                    for(var r = 0; r<subDiv; r++){
+                        visible[c][r] = false;
+                    }
+                }
+                computeFov(enemy.x,enemy.y, isBarrier, markVisible);
+
+                for (var c = 0; c<subDiv; c++){
+                    for(var r = 0; r<subDiv; r++){
+                        visible[c][r] = inViewAngle(c,r)&&visible[c][r];
+                    }
+                }
+
+                probs = bayesUpdate(visible, probs, [player.x, player.y],movementModel);
+
+            }
+
+            function drawGrid(){
+
+                // for ( var i = 1; i < subDiv; i++){
+                //     ctx.beginPath();
+                //     ctx.moveTo(i*pixSize,0);
+                //     ctx.lineTo(i*pixSize,canvas.height);
+                //     ctx.stroke();
+
+                //     ctx.beginPath();
+                //     ctx.moveTo(0,i*pixSize);
+                //     ctx.lineTo(canvas.width,i*pixSize);
+                //     ctx.stroke();
+                // }
+
+                for(var r=0; r<subDiv; r++){
+                    for (var c=0; c<subDiv; c++){
+                        if (visible[c][r]){
+                            ctx.beginPath();
+                            ctx.rect(c*pixSize, r*pixSize, pixSize, pixSize);
+                            ctx.fillStyle = "#FFCCCC";
+                            ctx.fill();
+                            ctx.closePath();
+                        }
+                    }
+                }
+            }
+
+            function drawProbs(){
+                var max =0;
+                for(var r=0; r<subDiv; r++){
+                    for (var c=0; c<subDiv; c++){
+                        if(probs[c][r]>max){
+                            max = probs[c][r];
+                        }
+                    }
+                }
+
+
+                for(var r=0; r<subDiv; r++){
+                    for (var c=0; c<subDiv; c++){
+                        ctx2.beginPath();
+                        ctx2.rect(c*pixSize, r*pixSize, pixSize, pixSize);
+                        var colorVector1 = [178,34,34];
+                        var colorVector2 = [211,211,211];
+                        var p = 100*probs[c][r];
+                        ctx2.fillStyle = `rgb(
+                            ${Math.floor(p*colorVector1[0]+(1-p)*colorVector2[0])},
+                            ${Math.floor(p*colorVector1[1]+(1-p)*colorVector2[1])},
+                            ${Math.floor(p*colorVector1[2]+(1-p)*colorVector2[2])})`;
+                        ctx2.fill();
+                        ctx2.closePath();
+                    }
+                }
+            }
+
+            function findMLE(){
+                var mle ={x:0, y:0};
+                for (var c = 0; c<probs.length; c++){
+                    for (var r = 0; r<probs.length; r++){
+                        if(probs[c][r]>probs[mle.x][mle.y]){
+                            mle.x=c;
+                            mle.y=r;
+                        }
+                    }
+                }
+
+                return mle;
+            }
+
+            function shadow(){
+                for(var r=0; r<subDiv; r++){
+                    for (var c=0; c<subDiv; c++){
+                        if (playerVisible[c][r]==false){
+                            ctx.beginPath();
+                            ctx.rect(c*pixSize, r*pixSize, pixSize, pixSize);
+                            ctx.fillStyle = "#222222";
+                            ctx.fill();
+                            ctx.closePath();
+                        }
+                    }
+                }
+            }
+
+            var count = 0;
+            function draw(){
+                count++;
+                ctx.clearRect(0,0, canvas.width, canvas.height);
+                ctx.beginPath();
+                ctx.rect(0, 0, 500, 500);
+                ctx.fillStyle = "rgb(211,211,211)";
+                ctx.fill();
+                // console.log('a')
+                drawGrid();
+                drawPath(shortestPath);
+                drawPlayer();
+                drawEnemy();
+                drawBarriers();
+                drawProbs();
+                
+                if (count % 10 ==0 ){
+                    var mle = findMLE();
+                    enemyStep(mle.x, mle.y);
+                }
+                // shadow();
+
+
+                if (player.x!=enemy.x || player.y != enemy.y){
+                    requestAnimationFrame(draw);
+                }
+                else{
+                    showEnd();
+                }
+            }
+
+            function showEnd(){
+                for(var r=0; r<subDiv; r++){
+                    for (var c=0; c<subDiv; c++){           
+                        ctx.beginPath();
+                        ctx.rect(c*pixSize, r*pixSize, pixSize, pixSize);
+                        ctx.fillStyle = "#222222";
+                        ctx.fill();
+                        ctx.closePath();  
+                    }
+                }
+                player.x = 0;
+                player.y=0;
+                enemy.x=20;
+                enemy.y=20;
+
+                ctx.font = "30px trajan-pro-3";
+                ctx.fillStyle = "#AAAAAA";
+                ctx.textAlign = "center";
+                ctx.fillText("Ha! You've been caught", canvas.width/2, canvas.height/2-20);
+                ctx.font = "30px trajan-pro-3";
+                ctx.fillStyle = "#AAAAAA";
+                ctx.textAlign = "center";
+                ctx.fillText("by the perfect rationalist.", canvas.width/2, canvas.height/2+20);  
+
+            }
+            
+            window.addEventListener("keydown", function(e) {
+                if(["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(e.code) > -1) {
+                    e.preventDefault();
+                }
+            }, false);
+            
+
+            var first = true;
+            document.addEventListener("keyup", keyUpHandler, false);
+            function keyUpHandler(e) {
+                if(e.key == "Right" || e.key == "ArrowRight") {
+                    if (player.x < subDiv-1) {
+                        if(!isBarrier(player.x+1,player.y)){
+                            player.x +=1;
+                        }
+                    }
+                }
+                else if(e.key == "Left" || e.key == "ArrowLeft") {
+                    if (player.x > 0){
+                        if(!isBarrier(player.x-1,player.y)){
+                            player.x -=1;
+                        }
+                    }
+                }
+                else if(e.key == "Up" || e.key == "ArrowUp"){
+                    if (player.y > 0){
+                        if(!isBarrier(player.x,player.y-1)){
+                            player.y -=1;
+                        }
+                    }
+                }
+                else if(e.key == "Down" || e.key == "ArrowDown"){
+                    if (player.y <subDiv-1){
+                        if(!isBarrier(player.x,player.y+1)){
+                            player.y +=1;
+                        }
+                    }
+                }
+
+                
+                for (var c = 0; c<subDiv; c++){
+                    for(var r = 0; r<subDiv; r++){
+                        playerVisible[c][r] = false;
+                    }
+                }
+
+                computeFov(player.x,player.y, isBarrier, markVisiblePlayer);
+                if (first){
+                    draw();
+                    first = false;
+                }
+            }
+
+            shadow();
+            ctx.font = "30px trajan-pro-3";
+            ctx.fillStyle = "#AAAAAA";
+            ctx.textAlign = "center";
+            ctx.fillText("Don't get caught!", canvas.width/2, canvas.height/2-100); 
+
+
+            ctx.font = "20px trajan-pro-3";
+            ctx.fillStyle = "#AAAAAA";
+            ctx.textAlign = "center";
+            ctx.fillText("Press Arrow Key to Begin", canvas.width/2, canvas.height/2); 
+
+        </script>
+    </body>
+</html>
